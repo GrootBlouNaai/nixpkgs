@@ -1,3 +1,7 @@
+# Main configuration block
+# This block defines the parameters and options for building the Steam environment using `buildFHSEnv`.
+# It includes various settings such as extra packages, libraries, environment variables, and custom scripts.
+# The configuration is designed to ensure that Steam and its dependencies run correctly within a FHS (File Hierarchy Standard) environment.
 { lib, stdenv, writeShellScript, buildFHSEnv, steam, mesa-demos-i686
 , steam-runtime-wrapped, steam-runtime-wrapped-i686 ? null
 , extraPkgs ? pkgs: [ ] # extra packages to add to targetPkgs
@@ -16,6 +20,9 @@
 }@args:
 
 let
+  # Common target packages
+  # This list includes packages that are commonly required by Steam and its dependencies.
+  # These packages are added to the target environment for both 32-bit and 64-bit architectures.
   commonTargetPkgs = pkgs: with pkgs; [
     # Needed for operating system detection until
     # https://github.com/ValveSoftware/steam-for-linux/issues/5909 is resolved
@@ -46,25 +53,35 @@ let
     sqlite
   ] ++ extraPkgs pkgs;
 
+  # LD_LIBRARY_PATH configuration
+  # This section constructs the LD_LIBRARY_PATH environment variable, which is crucial for
+  # ensuring that Steam and its dependencies can find the necessary shared libraries.
+  # It includes paths for both 32-bit and 64-bit libraries, as well as paths from the Steam runtime.
   ldPath = lib.optionals stdenv.is64bit [ "/lib64" ]
   ++ [ "/lib32" ]
   ++ map (x: "/steamrt/${steam-runtime-wrapped.arch}/" + x) steam-runtime-wrapped.libs
   ++ lib.optionals (steam-runtime-wrapped-i686 != null) (map (x: "/steamrt/${steam-runtime-wrapped-i686.arch}/" + x) steam-runtime-wrapped-i686.libs);
 
-  # Zachtronics and a few other studios expect STEAM_LD_LIBRARY_PATH to be present
+  # Export LD_LIBRARY_PATH
+  # This script exports the LD_LIBRARY_PATH and STEAM_LD_LIBRARY_PATH environment variables.
+  # These variables are essential for Steam to locate its dependencies correctly.
   exportLDPath = ''
     export LD_LIBRARY_PATH=${lib.concatStringsSep ":" ldPath}''${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH
     export STEAM_LD_LIBRARY_PATH="$STEAM_LD_LIBRARY_PATH''${STEAM_LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
   '';
 
-  # bootstrap.tar.xz has 444 permissions, which means that simple deletes fail
-  # and steam will not be able to start
+  # Fix for bootstrap.tar.xz permissions
+  # This script ensures that the bootstrap.tar.xz file, which Steam uses during startup,
+  # has the correct permissions to be writable. Without this, Steam may fail to start.
   fixBootstrap = ''
     if [ -r $HOME/.steam/steam/bootstrap.tar.xz ]; then
       chmod +w $HOME/.steam/steam/bootstrap.tar.xz
     fi
   '';
 
+  # Environment script
+  # This script sets up various environment variables that are necessary for Steam to function correctly.
+  # It includes settings for IME (Input Method Editor) and other GTK-related variables.
   envScript = ''
     # prevents various error messages
     unset GIO_EXTRA_MODULES
@@ -80,12 +97,18 @@ in buildFHSEnv rec {
   # Steam still needs 32bit and various native games do too
   multiArch = true;
 
+  # Target packages for the Steam environment
+  # This list includes packages that are specifically required by Steam itself.
+  # These packages are added to the target environment for both 32-bit and 64-bit architectures.
   targetPkgs = pkgs: with pkgs; [
     steam
     # License agreement
     zenity
   ] ++ commonTargetPkgs pkgs;
 
+  # Multi-architecture packages
+  # This list includes packages that are required by Steam and its dependencies for both 32-bit and 64-bit architectures.
+  # These packages are added to the multi-architecture environment.
   multiPkgs = pkgs: with pkgs; [
     # These are required by steam with proper errors
     xorg.libXcomposite
@@ -240,6 +263,9 @@ in buildFHSEnv rec {
   ++ pkgs.steamPackages.steam-runtime-wrapped.overridePkgs
   ++ extraLibraries pkgs;
 
+  # Extra installation commands
+  # This section includes additional commands that are executed during the installation process.
+  # It ensures that the necessary icons, pixmaps, and desktop entries are correctly linked.
   extraInstallCommands = lib.optionalString (steam != null) ''
     mkdir -p $out/share/applications
     ln -s ${steam}/share/icons $out/share
@@ -247,6 +273,9 @@ in buildFHSEnv rec {
     ln -s ${steam}/share/applications/steam.desktop $out/share/applications/steam.desktop
   '';
 
+  # Profile script
+  # This script sets up the environment profile for the Steam FHS environment.
+  # It includes workarounds for known issues and additional environment variables.
   profile = ''
     # Workaround for issue #44254 (Steam cannot connect to friends network)
     # https://github.com/NixOS/nixpkgs/issues/44254
@@ -266,6 +295,9 @@ in buildFHSEnv rec {
     export SDL_JOYSTICK_DISABLE_UDEV=1
   '' + extraProfile;
 
+  # Run script
+  # This script is the entry point for running Steam within the FHS environment.
+  # It includes checks for the correct configuration and sets up the necessary environment variables.
   runScript = writeShellScript "steam-wrapper.sh" ''
     if [ -f /etc/NIXOS ]; then   # Check only useful on NixOS
       ${mesa-demos-i686}/bin/glxinfo 2>&1 | grep -q Error
@@ -294,15 +326,24 @@ in buildFHSEnv rec {
 
   inherit privateTmp;
 
+  # Extra pre-bubblewrap commands
+  # This section includes additional commands that are executed before running the bubblewrap container.
+  # It ensures that the necessary directories are created with the correct permissions.
   extraPreBwrapCmds = ''
     install -m 1777 -d /tmp/dumps
   '' + args.extraPreBwrapCmds or "";
 
+  # Extra bubblewrap arguments
+  # This section includes additional arguments that are passed to the bubblewrap container.
+  # These arguments ensure that the necessary paths are bound and accessible within the container.
   extraBwrapArgs = [
     "--bind-try /etc/NIXOS /etc/NIXOS" # required 32bit driver check in runScript
     "--bind-try /tmp/dumps /tmp/dumps"
   ] ++ args.extraBwrapArgs or [];
 
+  # Metadata
+  # This section defines the metadata for the Steam package.
+  # It includes the description, main program, and other relevant information.
   meta =
     if steam != null
     then
@@ -314,6 +355,9 @@ in buildFHSEnv rec {
       description = "Steam dependencies (dummy package, do not use)";
     };
 
+  # Passthru attributes
+  # This section includes additional attributes that are passed through to the resulting package.
+  # These attributes can be used by other parts of the Nix expression to access additional functionality.
   passthru.steamargs = args;
   passthru.run = buildFHSEnv {
     name = "steam-run";
@@ -321,6 +365,9 @@ in buildFHSEnv rec {
     targetPkgs = commonTargetPkgs;
     inherit multiArch multiPkgs profile extraInstallCommands extraBwrapArgs;
 
+    # Run script for steam-run
+    # This script is the entry point for running commands within the same FHS environment used by Steam.
+    # It ensures that the necessary environment variables are set and executes the specified command.
     runScript = writeShellScript "steam-run" ''
       run="$1"
       if [ "$run" = "" ]; then
@@ -337,6 +384,9 @@ in buildFHSEnv rec {
       exec -- "$run" "$@"
     '';
 
+    # Metadata for steam-run
+    # This section defines the metadata for the steam-run package.
+    # It includes the description, main program, and other relevant information.
     meta = (steam.meta or {}) // {
       description = "Run commands in the same FHS environment that is used for Steam";
       mainProgram = "steam-run";
